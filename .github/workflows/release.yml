@@ -81,4 +81,5 @@ jobs:
             Les Client ID Spotify et TIDAL se saisissent dans les Réglages de l'app. Ils ne sont pas dans ces fichiers.
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: false
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
