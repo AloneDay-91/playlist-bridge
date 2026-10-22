@@ -153,11 +153,17 @@
   .tnum {
     font-variant-numeric: tabular-nums;
   }
-  /* Barre de titre macOS : zone draggable */
-  .drag {
+  /*
+   * Complément de data-tauri-drag-region : WebKit n'hérite pas de la zone,
+   * il faut la poser aussi sur les enfants, sauf les contrôles.
+   */
+  .drag,
+  .drag * {
     -webkit-app-region: drag;
   }
-  .drag :is(button, input, a, [role='tab']) {
+  .no-drag,
+  .no-drag *,
+  .drag :is(button, input, textarea, select, a, label, [role='tab'], [role='button']) {
     -webkit-app-region: no-drag;
   }
 }

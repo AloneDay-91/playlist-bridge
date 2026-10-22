@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { AppSettings } from '@shared/types'
+import { TIDAL_SCOPES, type AppSettings } from '@shared/types'
 import { Button } from '@/components/ui/Button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog'
-import { Field, FieldControl, FieldDescription, FieldLabel } from '@/components/ui/Field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/Field'
+import { Input } from '@/components/ui/Input'
 import { api } from '@/lib/api'
 import { Icon } from './Icon'
 
@@ -18,16 +19,21 @@ export function SettingsDialog({ open, onClose, onSaved }: { open: boolean; onCl
   }, [open])
 
   const link = (href: string, text: string) => (
-    <button type="button" className="text-foreground underline underline-offset-2" onClick={() => api.openExternal(href)}>
+    <Button type="button" variant="link" className="h-auto px-0" onClick={() => api.openExternal(href)}>
       {text}
-    </button>
+    </Button>
   )
 
   const field = (label: string, k: keyof AppSettings, hint: ReactNode, placeholder = '') =>
     s && (
       <Field>
         <FieldLabel>{label}</FieldLabel>
-        <FieldControl value={s[k]} onValueChange={(v) => setS({ ...s, [k]: String(v) })} placeholder={placeholder} spellCheck={false} />
+        <Input
+          value={s[k]}
+          onChange={(e) => setS({ ...s, [k]: e.target.value })}
+          placeholder={placeholder}
+          spellCheck={false}
+        />
         <FieldDescription>{hint}</FieldDescription>
       </Field>
     )
@@ -49,7 +55,7 @@ export function SettingsDialog({ open, onClose, onSaved }: { open: boolean; onCl
                 spotifyClientId: s.spotifyClientId.trim(),
                 tidalClientId: s.tidalClientId.trim(),
                 tidalCountry: s.tidalCountry.trim().toUpperCase(),
-                tidalScopes: s.tidalScopes.trim()
+                tidalScopes: s.tidalScopes.trim() || TIDAL_SCOPES
               })
               onSaved()
               onClose()
@@ -78,15 +84,24 @@ export function SettingsDialog({ open, onClose, onSaved }: { open: boolean; onCl
             {field(
               'Client ID Spotify',
               'spotifyClientId',
-              <>Crée une app sur {link('https://developer.spotify.com/dashboard', 'le dashboard Spotify')} (Web API), ajoute l’URL ci-dessus et ton compte dans User Management.</>
+              'App Web API. Ajoute l’URL ci-dessus et ton compte dans User Management.'
             )}
+            {link('https://developer.spotify.com/dashboard', 'Dashboard Spotify')}
             {field(
               'Client ID TIDAL',
               'tidalClientId',
-              <>Crée une app sur {link('https://developer.tidal.com/dashboard', 'developer.tidal.com')} avec la même URL de redirection.</>
+              'Même URL de redirection. Active ensuite les scopes de l’app.'
             )}
+            {link('https://developer.tidal.com/dashboard', 'Dashboard TIDAL')}
             {field('Pays du catalogue TIDAL', 'tidalCountry', 'Code à deux lettres. Vide = pays de ton compte.', 'FR')}
-            {field('Scopes TIDAL', 'tidalScopes', 'À ajuster seulement si TIDAL refuse la connexion à cause d’un scope.')}
+            {field(
+              'Scopes TIDAL',
+              'tidalScopes',
+              'Playlists et favoris. Ajoute user.read ou search.read seulement s’ils sont activés sur l’app : sinon TIDAL refuse toute la connexion (erreur 1002).'
+            )}
+            <Button type="button" variant="outline" onClick={() => s && setS({ ...s, tidalScopes: TIDAL_SCOPES })}>
+              Scopes par défaut
+            </Button>
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>

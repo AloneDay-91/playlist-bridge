@@ -11,7 +11,11 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "baseUrl": ".",
-    "paths": { "@shared/*": ["src/shared/*"] }
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "@/*": ["src/renderer/src/*"],
+      "@main/*": ["src/main/*"]
+    }
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts", "vite.demo.config.ts", "tests/**/*"]
+  "include": ["src/shared/**/*", "vite.config.ts", "vite.demo.config.ts", "vitest.config.ts", "tests/**/*"]
 }

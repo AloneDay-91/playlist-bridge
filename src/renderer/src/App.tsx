@@ -15,6 +15,8 @@ import {
 } from '@shared/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog'
+import { popupClassName } from '@/components/ui/styles'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/Empty'
 import { Input } from '@/components/ui/Input'
 import { Progress } from '@/components/ui/Progress'
@@ -24,7 +26,7 @@ import { ToastProvider, Toaster } from '@/components/ui/Toast'
 import { Toggle } from '@/components/ui/Toggle'
 import { ToggleGroup } from '@/components/ui/ToggleGroup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/Tooltip'
-import { api, isDemo, newJobId } from '@/lib/api'
+import { api, newJobId } from '@/lib/api'
 import { fail, notify, saveCsv, toasts } from '@/lib/feedback'
 import { historyEntry } from '@/lib/transfer'
 import { cn } from '@/lib/utils'
@@ -37,6 +39,7 @@ import { PlaylistPicker, type PickResult } from './components/PlaylistPicker'
 import { PlaylistSlot } from './components/PlaylistSlot'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
+import { Titlebar } from './components/Titlebar'
 
 type Loaded = { playlist: Playlist; tracks: Track[] | null }
 type Target = ({ kind: 'existing' } & Loaded) | { kind: 'new'; service: Service; name: string }
@@ -160,6 +163,8 @@ function Bridge() {
   const [twoWayWanted, setTwoWayWanted] = useState(false)
   const canTwoWay = !!left?.playlist.editable && right?.kind === 'existing'
   const twoWay = twoWayWanted && canTwoWay
+  const [forceDuplicates, setForceDuplicates] = useState(false)
+  const [askDuplicates, setAskDuplicates] = useState(false)
 
   const [resolutions, setResolutions] = useState(new Map<string, Resolution>())
   const [selection, setSelection] = useState(new Set<string>())
@@ -167,14 +172,15 @@ function Bridge() {
   const [query, setQuery] = useState('')
 
   const actionable = useCallback(
-    (rows: CompareRow[], both: boolean) => rows.filter((r) => rowDirection(r, both)).map((r) => r.key),
+    (rows: CompareRow[], both: boolean, force = false) =>
+      rows.filter((r) => rowDirection(r, both, force)).map((r) => r.key),
     []
   )
 
   // Nouvelle comparaison → on repart de zéro, tout ce qui peut être ajouté est coché
   useEffect(() => {
     setResolutions(new Map())
-    setSelection(new Set(compare ? actionable(compare.rows, twoWay) : []))
+    setSelection(new Set(compare ? actionable(compare.rows, twoWay, forceDuplicates) : []))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compare])
 
@@ -206,7 +212,7 @@ function Bridge() {
       })
       setSelection((s) => {
         const n = new Set(s)
-        for (const r of [...a, ...b]) if (r.status === 'already-there') n.delete(r.sourceKey)
+        for (const r of [...a, ...b]) if (r.status === 'already-there' && !forceDuplicates) n.delete(r.sourceKey)
         return n
       })
     })
@@ -215,6 +221,27 @@ function Bridge() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compare])
+
+  // Forcer les doublons coche les titres déjà présents et les répétitions de la source
+  useEffect(() => {
+    if (!compare) return
+    setSelection((s) => {
+      const n = new Set(s)
+      for (const r of compare.rows) {
+        if (r.status !== 'both' && r.status !== 'duplicate') continue
+        if (forceDuplicates) n.add(r.key)
+        else n.delete(r.key)
+      }
+      for (const [k, r] of resolutions) {
+        if (r.status !== 'already-there') continue
+        if (forceDuplicates) n.add(k)
+        else n.delete(k)
+      }
+      return n
+    })
+    // La sélection suit le toggle, pas chaque nouvelle résolution
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceDuplicates])
 
   // Activer / couper le retour vers la source coche / décoche les titres concernés
   useEffect(() => {
@@ -239,22 +266,42 @@ function Bridge() {
   const rowByKey = useMemo(() => new Map(compare?.rows.map((r) => [r.key, r]) ?? []), [compare])
   const dirOf = (key: string): Direction | null => {
     const r = rowByKey.get(key)
-    return r ? rowDirection(r, twoWay) : null
+    return r ? rowDirection(r, twoWay, forceDuplicates) : null
   }
   const sourceOf = (key: string): Track | undefined => {
     const r = rowByKey.get(key)
     return dirOf(key) === 'left' ? r?.right : r?.left
   }
 
-  const pendingKeys = compare ? actionable(compare.rows, twoWay) : []
-  const selectable = pendingKeys.filter((k) => !['not-found', 'already-there'].includes(resolutions.get(k)?.status ?? ''))
+  const pendingKeys = compare ? actionable(compare.rows, twoWay, forceDuplicates) : []
+  const selectable = pendingKeys.filter((k) => {
+    const status = resolutions.get(k)?.status
+    if (status === 'not-found') return false
+    if (status === 'already-there' && !forceDuplicates) return false
+    return true
+  })
   const allSelected = selectable.length > 0 && selectable.every((k) => selection.has(k))
   const selected = [...selection].filter((k) => dirOf(k))
-  const toResolve = selected.filter((k) => !resolutions.has(k))
-  const toAdd = selected.filter((k) => resolutions.get(k)?.status === 'found')
+  const toResolve = selected.filter((k) => rowByKey.get(k)?.status !== 'both' && !resolutions.has(k))
+  /** Titres à envoyer, dans l'ordre de la source. Les déjà présents n'y entrent que si on force. */
+  const tracksInOrder = (dir: Direction): Track[] => {
+    if (!compare) return []
+    const out: Track[] = []
+    for (const row of compare.rows) {
+      if (!selection.has(row.key) || dirOf(row.key) !== dir) continue
+      if (forceDuplicates && row.status === 'both' && row.right) {
+        out.push(row.right)
+        continue
+      }
+      const res = resolutions.get(row.key)
+      if (!res?.match) continue
+      if (res.status === 'found' || (forceDuplicates && res.status === 'already-there')) out.push(res.match)
+    }
+    return out
+  }
+  const toAdd = [...tracksInOrder('right'), ...tracksInOrder('left')]
   const notFound = pendingKeys.filter((k) => resolutions.get(k)?.status === 'not-found').length
-  // Ce qui reste vraiment à faire (les « déjà présents sous une autre version » ne comptent pas)
-  const remaining = pendingKeys.filter((k) => resolutions.get(k)?.status !== 'already-there')
+  const remaining = pendingKeys.filter((k) => forceDuplicates || resolutions.get(k)?.status !== 'already-there')
 
   const rows = useMemo(
     () =>
@@ -302,7 +349,9 @@ function Bridge() {
       // Introuvables et déjà présents ne sont plus cochés
       setSelection((s) => {
         const n = new Set(s)
-        for (const r of found) if (r.status !== 'found') n.delete(r.sourceKey)
+        for (const r of found) {
+          if (r.status === 'not-found' || (r.status === 'already-there' && !forceDuplicates)) n.delete(r.sourceKey)
+        }
         return n
       })
       const nf = found.filter((r) => r.status === 'not-found').length
@@ -323,8 +372,8 @@ function Bridge() {
     let newRight: Playlist | null = null
     try {
       for (const dir of ['right', 'left'] as Direction[]) {
-        const keys = toAdd.filter((k) => dirOf(k) === dir)
-        if (!keys.length) continue
+        const tracks = tracksInOrder(dir)
+        if (!tracks.length) continue
         const service = serviceFor(dir)!
         const target: AddTarget =
           dir === 'left'
@@ -332,10 +381,9 @@ function Bridge() {
             : right.kind === 'existing'
               ? { service, playlistId: right.playlist.id }
               : { service, create: { name: right.name, description: `Depuis « ${left.playlist.name} »` } }
-        const tracks = keys.map((k) => resolutions.get(k)!.match!)
         const jobId = newJobId()
         setJob({ jobId, phase: 'adding', done: 0, total: tracks.length })
-        const res = await api.add(jobId, target, tracks)
+        const res = await api.add(jobId, target, tracks, { allowDuplicates: forceDuplicates })
 
         const from = dir === 'right' ? left.playlist : (right as { playlist: Playlist }).playlist
         const toName = dir === 'right' ? rightName : left.playlist.name
@@ -348,7 +396,9 @@ function Bridge() {
             target: { service, name: toName },
             added: res.added,
             resolutions: dirKeys.map((k) => resolutions.get(k)!),
-            sources: new Map(dirKeys.map((k) => [k, sourceOf(k)!]))
+            sources: new Map(dirKeys.map((k) => [k, sourceOf(k)!])),
+            playlistId: res.playlistId,
+            addedTracks: res.tracks
           })
         )
         notify(`${plural(res.added, 'titre')} ajouté${res.added > 1 ? 's' : ''} à ${toName}`)
@@ -359,7 +409,8 @@ function Bridge() {
           newRight = lists.find((x) => x.id === res.playlistId) ?? { id: res.playlistId, service, name: toName, editable: true }
         }
       }
-      // On recharge pour voir le résultat
+      // On recharge pour voir le résultat. Le forçage ne reste pas armé, sinon le rechargement recoche tout.
+      setForceDuplicates(false)
       if (reloadLeft) void loadPlaylists(left.playlist.service)
       if (reloadLeft) await pickLeft(left.playlist)
       if (newRight) await pickRight({ kind: 'existing', playlist: newRight })
@@ -386,11 +437,11 @@ function Bridge() {
     )
     setSelection((s) => {
       const n = new Set(s)
-      if (there) n.delete(fixKey)
+      if (there && !forceDuplicates) n.delete(fixKey)
       else n.add(fixKey)
       return n
     })
-    if (there) notify('Déjà présent', `${match.title} est déjà dans la playlist, il ne sera pas ajouté.`)
+    if (there && !forceDuplicates) notify('Déjà présent', `${match.title} est déjà dans la playlist, il ne sera pas ajouté.`)
     setFixKey(null)
   }
 
@@ -405,10 +456,12 @@ function Bridge() {
   const exportName = `${left?.playlist.name ?? 'playlist'}${right ? ` vs ${rightName}` : ''}.csv`
 
   return (
-    <div className="flex h-full">
-      {drawer && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} />}
+    <div className="flex h-full flex-col bg-background">
+      <Titlebar onMenu={() => setDrawer((open) => !open)} />
+      <div className="flex min-h-0 flex-1">
+      {drawer && <div className="fixed inset-x-0 top-12 bottom-0 z-30 bg-black/40 md:hidden" onClick={() => setDrawer(false)} />}
       <Sidebar
-        className={cn('max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-xl', !drawer && 'max-md:hidden')}
+        className={cn('max-md:fixed max-md:top-12 max-md:bottom-0 max-md:left-0 max-md:z-40 max-md:shadow-xl', !drawer && 'max-md:hidden')}
         accounts={accounts}
         playlists={playlists}
         loading={loadingLists}
@@ -440,16 +493,8 @@ function Bridge() {
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* En-tête : source ⇄ cible */}
-        <header className="drag border-b px-4 pt-3 pb-3 md:pt-7">
-          <div className="mb-2 flex items-center gap-2 md:hidden">
-            <Button variant="ghost" size="icon-sm" aria-label="Comptes et playlists" onClick={() => setDrawer(true)}>
-              <Icon name="menu" />
-            </Button>
-            <span className="text-sm font-semibold">Playlist Bridge</span>
-            <span className="flex-1" />
-            {isDemo && <Badge variant="outline">Mode démo</Badge>}
-          </div>
+        {/* Source ⇄ cible, sous la barre de titre */}
+        <header className="border-b px-4 py-3">
           <div className="grid grid-cols-1 items-center gap-1 md:grid-cols-[minmax(0,1fr)_56px_minmax(0,1fr)] md:gap-0">
             {left ? (
               <PlaylistSlot side="source" playlist={left.playlist} count={left.tracks?.length} onClick={() => setPicker('source')} />
@@ -476,72 +521,89 @@ function Bridge() {
               <PlaylistSlot side="cible" onClick={() => setPicker('cible')} />
             )}
           </div>
-
-          {compare && (
-            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2">
-              <div className="-mx-4 max-w-[calc(100%+2rem)] overflow-x-auto px-4 md:mx-0 md:max-w-none md:px-0">
-                <ToggleGroup className="w-max" value={[filter]} onValueChange={(v) => v[0] && setFilter(v[0] as Filter)}>
-                  {filters
-                    .filter((f) => f.value === 'all' || f.count)
-                    .map((f) => (
-                      <Toggle key={f.value} value={f.value} className="gap-1.5">
-                        {f.label}
-                        <span className="tnum text-muted-foreground">{f.count ?? 0}</span>
-                      </Toggle>
-                    ))}
-                </ToggleGroup>
-              </div>
-              <span className="flex-1 max-md:hidden" />
-              <div className="relative min-w-40 flex-1 md:max-w-56 md:flex-none">
-                <Icon name="search" size={13} className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="row-search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Filtrer les titres"
-                  aria-label="Filtrer les titres"
-                  className="pl-8"
-                />
-              </div>
-              {canTwoWay && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Toggle
-                        pressed={twoWayWanted}
-                        onPressedChange={setTwoWayWanted}
-                        className="gap-1.5 data-pressed:text-new"
-                        aria-label="Synchroniser dans les deux sens"
-                      />
-                    }
-                  >
-                    <Icon name="sync" size={14} /> Dans les deux sens
-                  </TooltipTrigger>
-                  <TooltipContent>Ajoute aussi à « {left?.playlist.name} » les titres qui ne sont que dans la cible</TooltipContent>
-                </Tooltip>
-              )}
-              {right && selectable.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => setSelection(allSelected ? new Set() : new Set(selectable))}>
-                  {allSelected ? 'Tout décocher' : 'Tout cocher'}
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Exporter en CSV"
-                title="Exporter en CSV"
-                onClick={() => left && saveCsv(exportName, compareToCsv(rows, resolutions, left.playlist.service, rightService))}
-              >
-                <Icon name="download" />
-              </Button>
-            </div>
-          )}
         </header>
 
+        {compare && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b bg-muted/30 px-4 py-2">
+            <div className="-mx-4 max-w-[calc(100%+2rem)] overflow-x-auto px-4 md:mx-0 md:max-w-none md:px-0">
+              <ToggleGroup className="w-max" value={[filter]} onValueChange={(v) => v[0] && setFilter(v[0] as Filter)}>
+                {filters
+                  .filter((f) => f.value === 'all' || f.count)
+                  .map((f) => (
+                    <Toggle key={f.value} value={f.value} className="gap-1.5">
+                      {f.label}
+                      <span className="tnum text-muted-foreground">{f.count ?? 0}</span>
+                    </Toggle>
+                  ))}
+              </ToggleGroup>
+            </div>
+            <span className="flex-1 max-md:hidden" />
+            <div className="relative min-w-40 flex-1 md:max-w-56 md:flex-none">
+              <Icon name="search" size={13} className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="row-search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filtrer les titres"
+                aria-label="Filtrer les titres"
+                className="pl-8"
+              />
+            </div>
+            {canTwoWay && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Toggle
+                      pressed={twoWayWanted}
+                      onPressedChange={setTwoWayWanted}
+                      className="gap-1.5 data-pressed:text-new"
+                      aria-label="Synchroniser dans les deux sens"
+                    />
+                  }
+                >
+                  <Icon name="sync" size={14} /> Dans les deux sens
+                </TooltipTrigger>
+                <TooltipContent>Ajoute aussi à « {left?.playlist.name} » les titres qui ne sont que dans la cible</TooltipContent>
+              </Tooltip>
+            )}
+            {right && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Toggle
+                      pressed={forceDuplicates}
+                      onPressedChange={(pressed) => (pressed ? setAskDuplicates(true) : setForceDuplicates(false))}
+                      className="gap-1.5 data-pressed:text-new"
+                      aria-label="Forcer l’ajout des doublons"
+                    />
+                  }
+                >
+                  <Icon name="duplicate" size={14} /> Doublons
+                </TooltipTrigger>
+                <TooltipContent>Ajoute aussi les titres déjà présents, en bas, dans l’ordre de la source</TooltipContent>
+              </Tooltip>
+            )}
+            {right && selectable.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => setSelection(allSelected ? new Set() : new Set(selectable))}>
+                {allSelected ? 'Tout décocher' : 'Tout cocher'}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Exporter en CSV"
+              title="Exporter en CSV"
+              onClick={() => left && saveCsv(exportName, compareToCsv(rows, resolutions, left.playlist.service, rightService))}
+            >
+              <Icon name="download" />
+            </Button>
+          </div>
+        )}
+
         {/* Contenu */}
-        <div className="flex-1 overflow-y-auto pt-2">
+        <div className={cn('min-h-0 flex-1 overflow-y-auto', !left && 'grid place-items-center')}>
           {!left ? (
-            <Empty className="mx-auto mt-24 px-4">
+            <Empty className="max-w-md">
               <EmptyHeader>
                 <EmptyMedia>
                   <Icon name="play" size={18} />
@@ -591,6 +653,7 @@ function Bridge() {
               resolutions={resolutions}
               selection={selection}
               twoWay={twoWay}
+              forceDuplicates={forceDuplicates}
               leftService={left.playlist.service}
               rightService={rightService}
               rightIsNew={right?.kind === 'new'}
@@ -604,7 +667,7 @@ function Bridge() {
         {/* Barre d'action */}
         {compare && right && (
           <div className="pointer-events-none absolute inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] flex justify-center px-4">
-            <div className="pointer-events-auto flex w-full max-w-2xl flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl bg-popover p-2 pl-4 shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10">
+            <div className={cn(popupClassName, 'pointer-events-auto flex w-full max-w-2xl flex-wrap items-center gap-x-4 gap-y-2 p-2 pl-4')}>
               {busy && job ? (
                 <div className="flex flex-1 items-center gap-3">
                   <Spinner />
@@ -647,13 +710,8 @@ function Bridge() {
             </div>
           </div>
         )}
-
-        {isDemo && (
-          <Badge variant="outline" className="absolute top-3 right-4 max-md:hidden">
-            Mode démo
-          </Badge>
-        )}
       </main>
+      </div>
 
       <PlaylistPicker
         open={picker !== null}
@@ -689,6 +747,29 @@ function Bridge() {
       />
       <HistoryDialog open={dialog === 'history'} onClose={() => setDialog(null)} />
       <SettingsDialog open={dialog === 'settings'} onClose={() => setDialog(null)} onSaved={refreshAccounts} />
+      <Dialog open={askDuplicates} onOpenChange={(o) => !o && setAskDuplicates(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Forcer l’ajout des doublons ?</DialogTitle>
+            <DialogDescription>
+              Les titres déjà dans la playlist cible seront ajoutés une deuxième fois. Ils arrivent en bas, dans le même ordre que la source. Les favoris n’acceptent pas deux fois le même titre. Tu peux retirer l’ajout ensuite depuis l’historique.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAskDuplicates(false)}>
+              Annuler
+            </Button>
+            <Button
+              onClick={() => {
+                setForceDuplicates(true)
+                setAskDuplicates(false)
+              }}
+            >
+              Forcer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

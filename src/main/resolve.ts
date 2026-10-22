@@ -7,8 +7,9 @@ import { getMatch, setMatches } from './store'
 /**
  * Pour chaque titre source, cherche son équivalent sur la plateforme cible :
  * 1. même plateforme → on réutilise l'ID tel quel
- * 2. recherche par ISRC
- * 3. recherche texte titre + artiste, avec un score de similarité
+ * 2. mémoire des correspondances
+ * 3. recherche par ISRC
+ * 4. recherche texte titre + artiste, avec un score de similarité
  * Puis on vérifie qu'il n'est pas déjà dans la playlist cible (anti-doublon).
  * Les correspondances trouvées (ou corrigées à la main) sont mémorisées :
  * une resynchro plus tard ne refait pas la recherche.
@@ -70,6 +71,6 @@ export async function resolveTracks(
       onProgress(++done)
     }
   })
-  setMatches(learned)
+  await setMatches(learned)
   return out
 }

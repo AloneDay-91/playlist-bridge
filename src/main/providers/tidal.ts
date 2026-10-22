@@ -1,5 +1,5 @@
 import { parseIsoDuration } from '@shared/matching'
-import { LIKED_ID, type Playlist, type Track } from '@shared/types'
+import { LIKED_ID, type AddedTrack, type Playlist, type Track } from '@shared/types'
 import { ApiClient, ApiError, chunk } from '../http'
 import { authorize } from '../oauth'
 import { getSettings, getToken, saveToken } from '../store'
@@ -14,7 +14,7 @@ import type { MusicProvider } from './types'
 const TOKEN_URL = 'https://auth.tidal.com/v1/oauth2/token'
 const BASE = 'https://openapi.tidal.com/v2'
 
-interface Ident { id: string; type: string; meta?: { addedAt?: string } }
+interface Ident { id: string; type: string; meta?: { addedAt?: string; itemId?: string } }
 interface Res extends Ident {
   attributes?: Record<string, any>
   relationships?: Record<string, { data?: Ident | Ident[] | null }>
@@ -110,11 +110,11 @@ export class TidalProvider implements MusicProvider {
       clientId: tidalClientId,
       scopes: tidalScopes
     })
-    saveToken('tidal', token)
+    await saveToken('tidal', token)
   }
 
-  disconnect(): void {
-    saveToken('tidal', null)
+  async disconnect(): Promise<void> {
+    await saveToken('tidal', null)
   }
 
   async me(): Promise<{ id: string; displayName: string }> {
@@ -175,7 +175,28 @@ export class TidalProvider implements MusicProvider {
           description: a.description || undefined,
           trackCount: a.numberOfItems,
           cover: artworkUrl(lk.get(`artworks:${rel(r, 'coverArt')[0]?.id}`)),
-          editable
+          editable,
+          updatedAt: a.lastModifiedAt || a.createdAt
+        })
+      }
+    }
+    // Un mix d'historique annoncé sur le fil (mois ou année), s'il n'est pas déjà listé.
+    const collectHistory = (doc: Doc, lk: Lookup) => {
+      for (const ref of doc.data as Res[]) {
+        const details = ref.attributes?.activityDetails as { activityType?: string; period?: string } | undefined
+        if (details?.activityType !== 'HISTORY_MIX_READY') continue
+        const subject = rel(ref, 'subject')[0]
+        if (!subject || out.has(subject.id)) continue
+        const playlist = lk.get(`playlists:${subject.id}`)
+        const a = playlist?.attributes ?? {}
+        out.set(subject.id, {
+          id: subject.id,
+          service: 'tidal',
+          name: a.name ?? (details.period ? `Historique ${details.period}` : 'Historique'),
+          description: a.description || undefined,
+          trackCount: a.numberOfItems,
+          cover: artworkUrl(lk.get(`artworks:${rel(playlist, 'coverArt')[0]?.id}`)),
+          editable: false
         })
       }
     }
@@ -193,24 +214,34 @@ export class TidalProvider implements MusicProvider {
     // Mes playlists
     await this.pages(
       '/playlists',
-      { 'filter[owners.id]': 'me', countryCode: country },
+      { 'filter[owners.id]': 'me', countryCode: country, sort: '-lastModifiedAt' },
       ['coverArt', ''],
       collect(true)
     )
     // Playlists où je suis collaborateur
     await this.pages(
       '/playlists',
-      { 'filter[collaborators.id]': 'me', countryCode: country },
+      { 'filter[collaborators.id]': 'me', countryCode: country, sort: '-lastModifiedAt' },
       ['coverArt', ''],
       collect(true)
     ).catch(() => undefined)
-    // Playlists favorites (lecture seule) — utiles comme source
+    // Playlists favorites. Les mixes d'historique enregistrés (un par mois, plus l'année)
+    // arrivent ici, en lecture seule. La liste complète de l'accueil TIDAL exige le
+    // scope interne r_usr, qui refuse toute la connexion.
     await this.pages(
       '/userCollectionPlaylists/me/relationships/items',
       { countryCode: country },
       ['items,items.coverArt', 'items'],
       collect(false)
     ).catch(() => undefined)
+    for (const surface of ['FEED', 'INBOX']) {
+      await this.pages(
+        '/userFeedItems',
+        { 'filter[owners.id]': 'me', 'filter[surface]': surface },
+        ['subject,subject.coverArt', 'subject'],
+        collectHistory
+      ).catch(() => undefined)
+    }
 
     return [...out.values()]
   }
@@ -296,28 +327,55 @@ export class TidalProvider implements MusicProvider {
   async addTracks(
     playlistId: string,
     tracks: Track[],
-    onProgress?: (done: number) => void
-  ): Promise<{ added: number; skipped: number }> {
+    onProgress?: (done: number) => void,
+    allowDuplicates = false
+  ): Promise<{ added: number; skipped: number; tracks: AddedTrack[] }> {
+    const added = new Set<string>()
     let done = 0
-    if (playlistId === LIKED_ID) {
-      for (const part of chunk(tracks, 20)) {
-        await this.api.post('/userCollectionTracks/me/relationships/items', {
-          data: part.map((t) => ({ id: t.id, type: 'tracks' }))
-        })
-        done += part.length
-        onProgress?.(done)
-      }
-      return { added: done, skipped: 0 }
-    }
-    // 20 éléments max par requête ; SKIP = TIDAL ignore ce qui est déjà dedans
-    for (const part of chunk(tracks, 20)) {
-      await this.api.post(`/playlists/${playlistId}/relationships/items`, {
-        data: part.map((t) => ({ id: t.id, type: 'tracks' })),
-        meta: { onDuplicates: 'SKIP' }
-      })
-      done += part.length
+    const note = (ids: string[]): void => {
+      for (const id of ids) added.add(id)
+      done = allowDuplicates ? done + ids.length : added.size
       onProgress?.(done)
     }
-    return { added: done, skipped: 0 }
+    if (playlistId === LIKED_ID) {
+      // Favoris listés du plus récent au plus ancien : on envoie la fin d'abord.
+      for (const part of chunk([...tracks].reverse(), 20)) {
+        const doc = await this.api.post<Doc>('/userCollectionTracks/me/relationships/items', {
+          data: part.map((t) => ({ id: t.id, type: 'tracks' }))
+        })
+        const rows = Array.isArray(doc.data) ? (doc.data as Ident[]) : []
+        const ids = rows.map((r) => r.id).filter(Boolean)
+        note(ids.length ? ids : part.map((t) => t.id))
+      }
+    } else {
+      // En bas, dans l'ordre de la source. Sans position, TIDAL ajoute à la fin.
+      for (const part of chunk(tracks, 20)) {
+        const doc = await this.api.post<Doc>(`/playlists/${playlistId}/relationships/items`, {
+          data: part.map((t) => ({ id: t.id, type: 'tracks' })),
+          meta: { onDuplicates: allowDuplicates ? 'ADD' : 'SKIP' }
+        })
+        const placed = Array.isArray(doc.data) ? (doc.data as Ident[]) : []
+        note(placed.map((r) => r.id))
+      }
+    }
+    return {
+      added: done,
+      skipped: tracks.length - done,
+      tracks: tracks.filter((t) => added.has(t.id)).map((t) => ({ id: t.id }))
+    }
+  }
+
+  async removeTracks(playlistId: string, tracks: AddedTrack[]): Promise<number> {
+    if (!tracks.length) return 0
+    const path =
+      playlistId === LIKED_ID
+        ? '/userCollectionTracks/me/relationships/items'
+        : `/playlists/${playlistId}/relationships/items`
+    for (const part of chunk(tracks, 20)) {
+      await this.api.request('DELETE', path, {
+        body: { data: part.map((t) => ({ id: t.id, type: 'tracks' })) }
+      })
+    }
+    return tracks.length
   }
 }

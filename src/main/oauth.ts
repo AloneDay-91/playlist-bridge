@@ -1,6 +1,6 @@
-import { shell } from 'electron'
-import { createHash, randomBytes } from 'node:crypto'
-import { createServer, type Server } from 'node:http'
+import { invoke } from '@tauri-apps/api/core'
+import { fetch } from '@tauri-apps/plugin-http'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import type { TokenSet } from './store'
 
 export const REDIRECT_PORT = 8888
@@ -15,59 +15,22 @@ interface OAuthConfig {
   extraParams?: Record<string, string>
 }
 
-const b64url = (buf: Buffer): string =>
-  buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+function b64url(bytes: Uint8Array): string {
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
 
-const PAGE = (title: string, body: string): string => `<!doctype html><meta charset="utf-8">
-<title>${title}</title>
-<body style="font-family:system-ui;background:#0e0f12;color:#e8e8ea;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><h1 style="font-weight:600">${title}</h1><p style="opacity:.7">${body}</p></div>`
-
-let activeServer: Server | null = null
-
-/** Attend la redirection OAuth sur 127.0.0.1 et renvoie le `code` */
-function waitForCode(expectedState: string, timeoutMs = 5 * 60_000): Promise<string> {
-  activeServer?.close()
-  return new Promise((resolve, reject) => {
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? '/', REDIRECT_URI)
-      if (url.pathname !== '/callback') {
-        res.writeHead(404).end()
-        return
-      }
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      const error = url.searchParams.get('error_description') ?? url.searchParams.get('error')
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      if (error || !code || state !== expectedState) {
-        res.end(PAGE('Connexion refusée', error ?? 'Réponse invalide, réessaie depuis l’app.'))
-        finish(() => reject(new Error(error ?? 'Réponse OAuth invalide')))
-      } else {
-        res.end(PAGE('C’est bon ✅', 'Tu peux fermer cet onglet et revenir sur Playlist Bridge.'))
-        finish(() => resolve(code))
-      }
-    })
-    const timer = setTimeout(
-      () => finish(() => reject(new Error('Connexion expirée (5 min)'))),
-      timeoutMs
-    )
-    function finish(cb: () => void): void {
-      clearTimeout(timer)
-      server.close()
-      if (activeServer === server) activeServer = null
-      cb()
-    }
-    server.on('error', (e) => finish(() => reject(e)))
-    server.listen(REDIRECT_PORT, '127.0.0.1')
-    activeServer = server
-  })
+async function sha256b64url(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return b64url(new Uint8Array(digest))
 }
 
 async function postForm(url: string, body: Record<string, string>): Promise<TokenSet> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body)
+    body: new URLSearchParams(body).toString()
   })
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) {
@@ -85,24 +48,28 @@ async function postForm(url: string, body: Record<string, string>): Promise<Toke
 
 /** Flow Authorization Code + PKCE, sans secret client (adapté à une app desktop) */
 export async function authorize(cfg: OAuthConfig): Promise<TokenSet> {
-  const verifier = b64url(randomBytes(64))
-  const challenge = b64url(createHash('sha256').update(verifier).digest())
-  const state = b64url(randomBytes(16))
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(64)))
+  const challenge = await sha256b64url(verifier)
+  const state = b64url(crypto.getRandomValues(new Uint8Array(16)))
 
   const url = new URL(cfg.authorizeUrl)
-  url.search = new URLSearchParams({
+  const params = new URLSearchParams({
     response_type: 'code',
     client_id: cfg.clientId,
     redirect_uri: REDIRECT_URI,
-    scope: cfg.scopes,
     code_challenge_method: 'S256',
     code_challenge: challenge,
     state,
     ...cfg.extraParams
-  }).toString()
+  })
+  const scopes = cfg.scopes.trim()
+  if (scopes) params.set('scope', scopes)
+  // TIDAL ne découpe pas les scopes séparés par « + ».
+  url.search = params.toString().replace(/\+/g, '%20')
 
-  const codePromise = waitForCode(state)
-  await shell.openExternal(url.toString())
+  // Le serveur local est côté Rust : la webview ne peut pas écouter un port.
+  const codePromise = invoke<string>('oauth_wait_code', { state })
+  await openUrl(url.toString())
   const code = await codePromise
 
   return postForm(cfg.tokenUrl, {

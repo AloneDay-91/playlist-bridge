@@ -20,9 +20,10 @@ export const METHOD_LABEL: Record<string, string> = {
 /** Sens d'ajout d'une ligne : vers la cible (droite) ou vers la source (gauche) */
 export type Direction = 'right' | 'left'
 
-export function rowDirection(row: CompareRow, twoWay: boolean): Direction | null {
+export function rowDirection(row: CompareRow, twoWay: boolean, forceDuplicates = false): Direction | null {
   if (row.status === 'missing') return 'right'
   if (row.status === 'extra' && twoWay) return 'left'
+  if (forceDuplicates && (row.status === 'both' || row.status === 'duplicate')) return 'right'
   return null
 }
 
@@ -102,6 +103,7 @@ interface RowProps {
   leftService: Service
   rightService?: Service
   rightIsNew: boolean
+  forceDuplicates: boolean
   onToggle: (key: string) => void
   onFix: (key: string) => void
   onOpen: (url: string) => void
@@ -115,20 +117,20 @@ interface RowProps {
 const Row = memo(function Row(p: RowProps) {
   const { row, resolution: res, selected } = p
   const { status, left, right } = row
-  const dir = rowDirection(row, p.twoWay)
+  const dir = rowDirection(row, p.twoWay, p.forceDuplicates)
   const source = dir === 'right' ? left : dir === 'left' ? right : undefined
   const targetService = dir === 'right' ? p.rightService : dir === 'left' ? p.leftService : undefined
   const targetName = targetService ? SERVICE_LABEL[targetService] : 'la cible'
 
   /* ------------------------- colonne centrale ------------------------- */
   let spine: ReactNode
-  if (status === 'both') {
+  if (status === 'both' && !p.forceDuplicates) {
     spine = (
       <Hint label={METHOD_LABEL[row.method ?? 'isrc']}>
         <Icon name="linked" size={15} className="text-both" />
       </Hint>
     )
-  } else if (status === 'duplicate') {
+  } else if (status === 'duplicate' && !p.forceDuplicates) {
     spine = (
       <Hint label="Doublon dans la source, ignoré">
         <Icon name="duplicate" size={15} className="text-destructive" />
@@ -146,7 +148,7 @@ const Row = memo(function Row(p: RowProps) {
         <Icon name="notFound" size={15} className="text-destructive" />
       </Hint>
     )
-  } else if (res?.status === 'already-there') {
+  } else if (res?.status === 'already-there' && !p.forceDuplicates) {
     spine = (
       <Hint label={`Déjà sur ${targetName} sous une autre version`}>
         <Icon name="check" size={15} className="text-both" />
@@ -211,7 +213,7 @@ const Row = memo(function Row(p: RowProps) {
   }
 
   const bridge =
-    status === 'both' || res?.status === 'already-there'
+    !selected && (status === 'both' || res?.status === 'already-there')
       ? 'bg-both/50'
       : dir && selected && res?.status !== 'not-found'
         ? 'bg-new/70'
@@ -222,7 +224,7 @@ const Row = memo(function Row(p: RowProps) {
       className="group/row grid h-14 grid-cols-[minmax(0,1fr)_40px_minmax(0,1fr)] items-stretch rounded-2xl py-1 hover:bg-muted/50 sm:grid-cols-[minmax(0,1fr)_56px_minmax(0,1fr)]"
       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' }}
     >
-      <div className={cn(status === 'duplicate' && 'line-through decoration-destructive/60 opacity-45')}>
+      <div className={cn(status === 'duplicate' && !p.forceDuplicates && 'line-through decoration-destructive/60 opacity-45')}>
         {left ? <TrackCell track={left} onOpen={p.onOpen} /> : dir === 'left' ? pending : null}
       </div>
       <div className="relative grid place-items-center">

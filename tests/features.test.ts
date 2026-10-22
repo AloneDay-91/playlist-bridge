@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { compareToCsv, notFoundToCsv, toCsv, trackUrl } from '../src/shared/csv'
 import { comparePlaylists, matchesQuery, searchQueryFor } from '../src/shared/matching'
 import { LIKED_ID, type HistoryEntry, type Playlist, type Track } from '../src/shared/types'
+import { addedSuffix, sortPlaylists } from '../src/shared/library'
 import { findCounterpart, historyEntry } from '../src/renderer/src/lib/transfer'
 
 const t = (p: Partial<Track> & Pick<Track, 'id' | 'title'>): Track => ({
@@ -72,5 +73,28 @@ describe('transfert', () => {
     })
     expect(e.notFound).toEqual([{ title: 'Redbone', artists: ['Stromae'], album: undefined, isrc: undefined, durationMs: 207_000 }])
     expect(e.alreadyThere).toBe(1)
+  })
+})
+
+describe('ordre et annulation', () => {
+  const pl = (p: Partial<Playlist> & Pick<Playlist, 'id' | 'name'>): Playlist => ({ service: 'tidal', editable: true, ...p })
+  it('trie les playlists de la plus ancienne à la plus récente, likés en tête', () => {
+    const sorted = sortPlaylists([
+      pl({ id: 'old', name: 'Vieille', updatedAt: '2024-01-01T00:00:00Z' }),
+      pl({ id: LIKED_ID, name: 'Titres favoris', kind: 'liked' }),
+      pl({ id: 'new', name: 'Récente', updatedAt: '2026-10-01T00:00:00Z' }),
+      pl({ id: 'plain', name: 'Sans date' })
+    ])
+    expect(sorted.map((p) => p.id)).toEqual([LIKED_ID, 'old', 'new', 'plain'])
+  })
+  it("ne retrouve l'ajout que si le bloc en fin de liste a la bonne taille", () => {
+    const at = '2026-10-22T09:56:00.000Z'
+    const tracks = [
+      t({ id: 'a', title: 'A', addedAt: '2025-01-01T00:00:00Z' }),
+      t({ id: 'b', title: 'B', addedAt: '2026-10-22T09:55:59Z' }),
+      t({ id: 'c', title: 'C', addedAt: '2026-10-22T09:55:59Z' })
+    ]
+    expect(addedSuffix(tracks, at, 2)?.map((x) => x.id)).toEqual(['b', 'c'])
+    expect(addedSuffix(tracks, at, 3)).toBeNull()
   })
 })

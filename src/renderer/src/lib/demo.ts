@@ -1,4 +1,5 @@
 import type { BridgeApi } from '@shared/api'
+import { sortPlaylists } from '@shared/library'
 import { bestCandidate, matchesQuery, sameTrack } from '@shared/matching'
 import {
   LIKED_ID,
@@ -98,7 +99,9 @@ const playlists: Record<Service, Playlist[]> = {
     liked('tidal', 'Titres favoris'),
     { id: 'td-1', service: 'tidal', name: 'Night drive', cover: cover(4), editable: true },
     { id: 'td-2', service: 'tidal', name: 'Chill FR', cover: cover(6), editable: true },
-    { id: 'td-3', service: 'tidal', name: 'Dimanche matin', cover: cover(12), editable: true }
+    { id: 'td-3', service: 'tidal', name: 'Dimanche matin', cover: cover(12), editable: true },
+    { id: 'td-mix', service: 'tidal', name: 'Octobre 2025', cover: cover(8), editable: false },
+    { id: 'td-discovery', service: 'tidal', name: 'Septembre 2025', cover: cover(15), editable: false }
   ]
 }
 
@@ -110,7 +113,9 @@ const contents: Record<string, Track[]> = {
   [`tidal:${LIKED_ID}`]: [5, 22, 21, 0].map((i) => byId('tidal', i)),
   'tidal:td-1': [0, 1, 2, 4, 15, 11, 13, 10].map((i) => byId('tidal', i)),
   'tidal:td-2': [3, 6, 12, 14, 17].map((i) => byId('tidal', i)),
-  'tidal:td-3': [9, 10, 21].map((i) => byId('tidal', i))
+  'tidal:td-3': [9, 10, 21].map((i) => byId('tidal', i)),
+  'tidal:td-mix': [2, 7, 11, 15, 18].map((i) => byId('tidal', i)),
+  'tidal:td-discovery': [4, 8, 16, 19, 23].map((i) => byId('tidal', i))
 }
 const countOf = (p: Playlist): Playlist => ({ ...p, trackCount: contents[`${p.service}:${p.id}`]?.length ?? 0 })
 
@@ -124,6 +129,8 @@ let history: HistoryEntry[] = [
     target: { service: 'tidal', name: 'Chill FR' },
     added: 2,
     alreadyThere: 0,
+    playlistId: 'td-2',
+    addedTracks: [{ id: 'tidal-3' }, { id: 'tidal-6' }],
     notFound: [{ title: 'Le Temps est bon', artists: ['Isabelle Pierre'], album: 'Le Temps est bon', isrc: 'CAA557100011', durationMs: 204_000 }]
   },
   {
@@ -165,7 +172,7 @@ export const demoApi: BridgeApi = {
 
   playlists: async (s) => {
     await wait(250)
-    return playlists[s].map(countOf)
+    return sortPlaylists(playlists[s].map(countOf))
   },
   tracks: async (s, id) => {
     await wait(300)
@@ -216,8 +223,30 @@ export const demoApi: BridgeApi = {
       playlists[target.service].splice(1, 0, { id: playlistId, service: target.service, name: target.create.name, editable: true })
     } else playlistId = target.playlistId
     const key = `${target.service}:${playlistId}`
+    // En bas, dans l'ordre de la source
     contents[key] = [...(contents[key] ?? []), ...tracks]
-    return { playlistId, added: tracks.length, skipped: 0 }
+    const listed = playlists[target.service].find((p) => p.id === playlistId)
+    if (listed) listed.updatedAt = new Date().toISOString()
+    return {
+      playlistId,
+      added: tracks.length,
+      skipped: 0,
+      tracks: tracks.map((t) => ({ id: t.id, uri: t.uri }))
+    }
+  },
+
+  undo: async (entryId) => {
+    const entry = history.find((e) => e.id === entryId)
+    if (!entry) throw new Error('Ajout introuvable dans l’historique.')
+    if (entry.undone) return entry
+    const playlistId = entry.playlistId
+    if (playlistId && entry.addedTracks?.length) {
+      const key = `${entry.target.service}:${playlistId}`
+      const ids = new Set(entry.addedTracks.map((t) => t.id))
+      contents[key] = (contents[key] ?? []).filter((t) => !ids.has(t.id))
+    }
+    history = history.map((e) => (e.id === entryId ? { ...e, undone: true } : e))
+    return history.find((e) => e.id === entryId)!
   },
 
   history: async () => history,

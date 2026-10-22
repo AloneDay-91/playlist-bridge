@@ -1,4 +1,4 @@
-import { LIKED_ID, type Playlist, type Track } from '@shared/types'
+import { LIKED_ID, type AddedTrack, type Playlist, type Track } from '@shared/types'
 import { ApiClient, ApiError, chunk } from '../http'
 import { authorize } from '../oauth'
 import { getSettings, getToken, saveToken } from '../store'
@@ -106,11 +106,11 @@ export class SpotifyProvider implements MusicProvider {
       clientId,
       scopes: SCOPES
     })
-    saveToken('spotify', token)
+    await saveToken('spotify', token)
   }
 
-  disconnect(): void {
-    saveToken('spotify', null)
+  async disconnect(): Promise<void> {
+    await saveToken('spotify', null)
     this.myId = undefined
   }
 
@@ -229,8 +229,11 @@ export class SpotifyProvider implements MusicProvider {
     playlistId: string,
     tracks: Track[],
     onProgress?: (done: number) => void
-  ): Promise<{ added: number; skipped: number }> {
-    const uris = tracks.map((t) => t.uri ?? `spotify:track:${t.id}`)
+  ): Promise<{ added: number; skipped: number; tracks: AddedTrack[] }> {
+    // Titres likés : la liste est du plus récent au plus ancien, on ajoute
+    // donc la fin de la source d'abord pour que le début reste en tête.
+    const ordered = playlistId === LIKED_ID ? [...tracks].reverse() : tracks
+    const uris = ordered.map((t) => t.uri ?? `spotify:track:${t.id}`)
     let done = 0
     if (playlistId === LIKED_ID) {
       // Nouveau endpoint générique de bibliothèque : 40 URIs max par appel
@@ -243,13 +246,37 @@ export class SpotifyProvider implements MusicProvider {
         done += part.length
         onProgress?.(done)
       }
-      return { added: done, skipped: 0 }
+    } else {
+      // En bas, dans l'ordre de la source. Sans position, Spotify ajoute à la fin.
+      for (const part of chunk(uris, 100)) {
+        await this.api.post(`/playlists/${playlistId}/items`, { uris: part })
+        done += part.length
+        onProgress?.(done)
+      }
+    }
+    return {
+      added: done,
+      skipped: 0,
+      tracks: tracks.map((t) => ({ id: t.id, uri: t.uri ?? `spotify:track:${t.id}` }))
+    }
+  }
+
+  async removeTracks(playlistId: string, tracks: AddedTrack[]): Promise<number> {
+    if (!tracks.length) return 0
+    const uris = tracks.map((t) => t.uri ?? `spotify:track:${t.id}`)
+    if (playlistId === LIKED_ID) {
+      for (const part of chunk(uris, 40)) {
+        await this.api.request('DELETE', '/me/library', { query: { uris: part.join(',') } }).catch((e) => {
+          throw e instanceof ApiError && (e.status === 401 || e.status === 403) ? new Error(RECONNECT) : e
+        })
+      }
+      return uris.length
     }
     for (const part of chunk(uris, 100)) {
-      await this.api.post(`/playlists/${playlistId}/items`, { uris: part })
-      done += part.length
-      onProgress?.(done)
+      await this.api.request('DELETE', `/playlists/${playlistId}/items`, {
+        body: { items: part.map((uri) => ({ uri })) }
+      })
     }
-    return { added: done, skipped: 0 }
+    return uris.length
   }
 }

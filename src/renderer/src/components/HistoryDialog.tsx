@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/Dialog'
 import { Empty, EmptyDescription, EmptyMedia } from '@/components/ui/Empty'
 import { api } from '@/lib/api'
-import { saveCsv } from '@/lib/feedback'
+import { fail, saveCsv } from '@/lib/feedback'
 import { cn } from '@/lib/utils'
 import { Icon, ServiceLogo } from './Icon'
 
@@ -22,6 +22,8 @@ export function HistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [undoId, setUndoId] = useState<string | null>(null)
+  const [undoing, setUndoing] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -67,6 +69,21 @@ export function HistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {e.undone ? (
+                        <Badge variant="outline">Annulé</Badge>
+                      ) : (
+                        e.added > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground"
+                            disabled={undoing}
+                            onClick={() => setUndoId(undoId === e.id ? null : e.id)}
+                          >
+                            <Icon name="undo" /> Annuler
+                          </Button>
+                        )
+                      )}
                       <Badge variant="secondary" className="tnum">+{e.added}</Badge>
                       {e.notFound.length > 0 && (
                         <button onClick={() => setExpanded(isOpen ? null : e.id)} className="rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
@@ -77,6 +94,35 @@ export function HistoryDialog({ open, onClose }: { open: boolean; onClose: () =>
                       )}
                     </div>
                   </div>
+                  {undoId === e.id && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-muted px-2 py-2">
+                      <span className="mr-auto text-xs text-muted-foreground">
+                        Retirer {e.added} titre{e.added > 1 ? 's' : ''} de {e.target.name} ?
+                      </span>
+                      <Button variant="outline" size="sm" disabled={undoing} onClick={() => setUndoId(null)}>
+                        Garder
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={undoing}
+                        onClick={async () => {
+                          setUndoing(true)
+                          try {
+                            const next = await api.undo(e.id)
+                            setEntries((list) => list?.map((x) => (x.id === e.id ? next : x)) ?? null)
+                            setUndoId(null)
+                          } catch (err) {
+                            fail(err)
+                          } finally {
+                            setUndoing(false)
+                          }
+                        }}
+                      >
+                        Retirer
+                      </Button>
+                    </div>
+                  )}
                   {isOpen && (
                     <div className="mt-2 rounded-xl bg-muted p-2">
                       <ul className="space-y-1 text-xs">

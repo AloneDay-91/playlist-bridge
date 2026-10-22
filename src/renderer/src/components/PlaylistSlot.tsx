@@ -1,4 +1,5 @@
 import { SERVICE_LABEL, type Playlist, type Service } from '@shared/types'
+import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 import { PlaylistCover } from './Cover'
 import { Icon, ServiceLogo } from './Icon'
@@ -12,26 +13,29 @@ type Props =
 export function PlaylistSlot(p: Props) {
   const filled = 'playlist' in p || 'draft' in p
   return (
-    <button
+    <Button
+      variant={filled ? 'secondary' : 'outline'}
       onClick={p.onClick}
-      className={cn(
-        'group flex min-w-0 flex-1 items-center gap-3 rounded-2xl p-2 pr-4 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/30',
-        filled ? 'hover:bg-muted' : 'border border-dashed hover:bg-muted/60'
-      )}
+      className="h-auto w-full min-w-0 justify-start gap-3 rounded-2xl px-2.5 py-2 text-left whitespace-normal"
     >
       {'playlist' in p ? (
         <PlaylistCover playlist={p.playlist} size={44} className="rounded-xl" />
       ) : (
-        <span className={cn('grid size-11 place-items-center rounded-xl', 'draft' in p ? 'border border-dashed border-new/70 text-new' : 'bg-muted text-muted-foreground')}>
+        <span
+          className={cn(
+            'grid size-11 shrink-0 place-items-center rounded-xl',
+            'draft' in p ? 'border border-dashed border-new/70 text-new' : 'bg-muted text-muted-foreground'
+          )}
+        >
           <Icon name={'draft' in p ? 'plus' : 'search'} size={18} />
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span className="block text-xs text-muted-foreground">{p.side === 'source' ? 'Source' : 'Cible'}</span>
+        <span className="block text-xs font-normal text-muted-foreground">{p.side === 'source' ? 'Source' : 'Cible'}</span>
         {'playlist' in p ? (
           <>
             <span className="block truncate text-base font-medium">{p.playlist.name}</span>
-            <span className="tnum flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="tnum flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
               <ServiceLogo service={p.playlist.service} size={12} />
               {SERVICE_LABEL[p.playlist.service]}, {p.count ?? p.playlist.trackCount ?? '?'} titres
             </span>
@@ -39,7 +43,7 @@ export function PlaylistSlot(p: Props) {
         ) : 'draft' in p ? (
           <>
             <span className="block truncate text-base font-medium">{p.draft.name}</span>
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
               <ServiceLogo service={p.draft.service} size={12} />
               Nouvelle playlist sur {SERVICE_LABEL[p.draft.service]}
             </span>
@@ -50,7 +54,11 @@ export function PlaylistSlot(p: Props) {
           </span>
         )}
       </span>
-      {filled && <span className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">Changer</span>}
-    </button>
+      {filled && (
+        <span className="text-xs font-normal text-muted-foreground opacity-0 transition-opacity group-hover/button:opacity-100">
+          Changer
+        </span>
+      )}
+    </Button>
   )
 }

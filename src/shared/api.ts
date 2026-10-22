@@ -12,7 +12,7 @@ import type {
   Track
 } from './types'
 
-/** Ce que le preload expose au renderer via `window.api` */
+/** Ce que l'app desktop expose au renderer (implémenté par `src/main/bridge.ts`). */
 export interface BridgeApi {
   getSettings(): Promise<AppSettings>
   saveSettings(patch: Partial<AppSettings>): Promise<AppSettings>
@@ -41,7 +41,9 @@ export interface BridgeApi {
   /** Correspondances déjà mémorisées, sans appel réseau (null = inconnue) */
   peekMatches(target: Service, sources: Track[]): Promise<(Track | null)[]>
 
-  add(jobId: string, target: AddTarget, tracks: Track[]): Promise<AddResult>
+  add(jobId: string, target: AddTarget, tracks: Track[], options?: { allowDuplicates?: boolean }): Promise<AddResult>
+  /** Retire de la playlist cible les titres d'une entrée d'historique */
+  undo(entryId: string): Promise<HistoryEntry>
 
   history(): Promise<HistoryEntry[]>
   recordHistory(entry: HistoryEntry): Promise<void>

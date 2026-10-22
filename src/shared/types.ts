@@ -37,6 +37,8 @@ export interface Playlist {
   cover?: string
   /** true si l'utilisateur peut y ajouter des titres */
   editable: boolean
+  /** Dernière modification, pour trier du plus récent au plus ancien */
+  updatedAt?: string
 }
 
 export interface AccountStatus {
@@ -45,6 +47,14 @@ export interface AccountStatus {
   connected: boolean
   displayName?: string
 }
+
+/**
+ * Scopes third-party qui ouvrent les playlists et les favoris.
+ * `user.read` et `search.read` ne sont pas dedans : s’ils ne sont pas activés
+ * sur l’app TIDAL, le login entier est refusé (erreur 1002).
+ * `r_usr` et `w_usr` sont internes, il ne faut pas les demander.
+ */
+export const TIDAL_SCOPES = 'playlists.read playlists.write collection.read collection.write'
 
 export interface AppSettings {
   spotifyClientId: string
@@ -106,10 +116,17 @@ export interface ProgressEvent {
   message?: string
 }
 
+export interface AddedTrack {
+  id: string
+  uri?: string
+}
+
 export interface AddResult {
   playlistId: string
   added: number
   skipped: number
+  /** Titres réellement ajoutés, dans l'ordre de la source */
+  tracks: AddedTrack[]
 }
 
 /** Une entrée d'historique = un ajout vers une playlist */
@@ -123,6 +140,11 @@ export interface HistoryEntry {
   added: number
   alreadyThere: number
   notFound: Pick<Track, 'title' | 'artists' | 'album' | 'isrc' | 'durationMs'>[]
+  /** Playlist cible, pour pouvoir retirer l'ajout */
+  playlistId?: string
+  /** Titres ajoutés lors de ce transfert. Absent sur les anciens historiques. */
+  addedTracks?: AddedTrack[]
+  undone?: boolean
 }
 
 export type ExportResult = 'saved' | 'copied' | 'cancelled' | 'unavailable'

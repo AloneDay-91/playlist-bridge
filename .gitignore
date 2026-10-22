@@ -1,6 +1,12 @@
 node_modules
 out
+dist
 release
 .DS_Store
 *.log
 dist-demo
+.env
+.env.*
+*.pem
+*.p12
+*.pfx

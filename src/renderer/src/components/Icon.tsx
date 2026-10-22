@@ -34,6 +34,7 @@ export const ICONS = {
   arrowLeft: 'arrows-arrow-left',
   heart: 'tools-heart',
   history: 'schedule-history',
+  undo: 'arrows-rotate-ccw',
   sync: 'schedule-repeat',
   batch: 'layouts-layers-2',
   download: 'documents-file-down',

@@ -10,7 +10,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': resolve(import.meta.dirname, 'src/shared'),
-      '@': resolve(import.meta.dirname, 'src/renderer/src')
+      '@': resolve(import.meta.dirname, 'src/renderer/src'),
+      '@main': resolve(import.meta.dirname, 'src/main')
     }
   },
   // Chemins relatifs : le build peut être servi depuis n'importe quel dossier

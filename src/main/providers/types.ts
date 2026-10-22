@@ -1,9 +1,9 @@
-import type { Playlist, Service, Track } from '@shared/types'
+import type { AddedTrack, Playlist, Service, Track } from '@shared/types'
 
 export interface MusicProvider {
   service: Service
   connect(): Promise<void>
-  disconnect(): void
+  disconnect(): Promise<void>
   isConfigured(): boolean
   isConnected(): boolean
   me(): Promise<{ id: string; displayName: string }>
@@ -18,6 +18,9 @@ export interface MusicProvider {
   addTracks(
     playlistId: string,
     tracks: Track[],
-    onProgress?: (done: number) => void
-  ): Promise<{ added: number; skipped: number }>
+    onProgress?: (done: number) => void,
+    /** Ajoute aussi les titres déjà présents dans la playlist */
+    allowDuplicates?: boolean
+  ): Promise<{ added: number; skipped: number; tracks: AddedTrack[] }>
+  removeTracks(playlistId: string, tracks: AddedTrack[]): Promise<number>
 }

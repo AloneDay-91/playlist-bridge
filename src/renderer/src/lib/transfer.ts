@@ -10,6 +10,8 @@ export function historyEntry(opts: {
   added: number
   resolutions: Resolution[]
   sources: Map<string, Track>
+  playlistId?: string
+  addedTracks?: HistoryEntry['addedTracks']
 }): HistoryEntry {
   const notFound = opts.resolutions
     .filter((r) => r.status === 'not-found')
@@ -24,7 +26,9 @@ export function historyEntry(opts: {
     target: opts.target,
     added: opts.added,
     alreadyThere: opts.resolutions.filter((r) => r.status === 'already-there').length,
-    notFound
+    notFound,
+    playlistId: opts.playlistId,
+    addedTracks: opts.addedTracks
   }
 }
 

@@ -1,4 +1,5 @@
 import type { Service } from '@shared/types'
+import { fetch as httpFetch } from '@tauri-apps/plugin-http'
 import { refresh } from './oauth'
 import { getToken, saveToken, type TokenSet } from './store'
 
@@ -35,7 +36,7 @@ export class ApiClient {
     if (!t) throw new ApiError(401, 'Pas connecté')
     if (!force && t.expiresAt > Date.now()) return t
     const next = await refresh(this.opts.tokenUrl, this.opts.clientId(), t)
-    saveToken(this.opts.service, next)
+    await saveToken(this.opts.service, next)
     return next
   }
 
@@ -56,7 +57,7 @@ export class ApiClient {
     let forced = false
     for (let attempt = 0; attempt < 6; attempt++) {
       const tok = await this.token(forced)
-      const res = await fetch(url, {
+      const res = await httpFetch(url, {
         method,
         headers: {
           Authorization: `Bearer ${tok.accessToken}`,

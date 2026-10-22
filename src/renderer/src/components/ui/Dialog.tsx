@@ -60,7 +60,7 @@ function DialogContent({
             }
           >
             <Icon name="close" size={16} />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">Fermer</span>
           </DialogPrimitive.Close>
         ) : null}
       </DialogPrimitive.Popup>

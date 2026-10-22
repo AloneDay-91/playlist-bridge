@@ -1,6 +1,6 @@
 # Playlist Bridge
 
-App desktop (Electron) pour transférer et synchroniser des playlists entre **TIDAL** et **Spotify**, dans les deux sens, sans créer de doublons.
+App desktop (Tauri) pour transférer et synchroniser des playlists entre **TIDAL** et **Spotify**, dans les deux sens, sans créer de doublons. Rust 1.90+ est requis.
 
 ## Fonctionnalités
 
@@ -20,11 +20,11 @@ App desktop (Electron) pour transférer et synchroniser des playlists entre **TI
 
 ```bash
 npm install
-npm run dev        # lance l'app Electron
+npm run dev        # lance l'app Tauri
 npm run demo       # juste l'interface dans le navigateur, avec des fausses données
 npm run demo:build # build de la démo, prêt à publier comme page hébergée (dist-demo/)
 npm test           # tests du moteur de comparaison
-npm run dist       # build + installeur (dmg / exe / AppImage) dans release/
+npm run dist       # installeur local : dmg (macOS), exe (Windows), deb + rpm (Linux)
 ```
 
 ## Configurer les comptes (une seule fois)
@@ -47,9 +47,9 @@ URL de redirection à déclarer des deux côtés : **`http://127.0.0.1:8888/call
 2. Redirect URI : `http://127.0.0.1:8888/callback`.
 3. Copie le **Client ID** dans *Réglages*.
 
-Scopes demandés par défaut : `user.read playlists.read playlists.write search.read collection.read collection.write` (les deux derniers servent aux titres favoris).
+Scopes demandés par défaut : `playlists.read playlists.write collection.read collection.write`. `user.read` et `search.read` ne sont pas demandés : s’ils ne sont pas activés sur l’app, TIDAL refuse toute la connexion (erreur 1002). On peut les ajouter dans Réglages une fois activés sur le dashboard. `r_usr` et `w_usr` sont internes. La session reste enregistrée sur la machine.
 
-> Tu t'étais connecté avant l'ajout des titres likés ? Déconnecte puis reconnecte Spotify et TIDAL une fois, pour autoriser l'accès à la bibliothèque. Si TIDAL refuse la connexion à cause d'un scope, ajuste-les dans *Réglages*.
+> Tu t'étais connecté avant l'ajout des titres likés ? Déconnecte puis reconnecte Spotify et TIDAL une fois, pour autoriser l'accès à la bibliothèque. Si TIDAL affiche l’erreur 1002, un scope demandé n’est pas activé sur l’app.
 
 ## Comment marche la comparaison
 
@@ -63,17 +63,17 @@ Fichier clé : `src/shared/matching.ts` (testé dans `tests/matching.test.ts`).
 ## Architecture
 
 ```
+src-tauri/              process natif : fenêtre, callback OAuth, trousseau, export CSV
 src/
-  main/                 process Electron (Node)
-    index.ts            fenêtre + IPC
-    oauth.ts            OAuth PKCE, serveur de callback sur 127.0.0.1:8888
-    store.ts            réglages, tokens chiffrés (safeStorage), mémoire des correspondances, historique
+  main/                 logique métier, exécutée dans la webview
+    bridge.ts           implémente BridgeApi
+    oauth.ts            OAuth PKCE (le code revient par le serveur Rust sur 127.0.0.1:8888)
+    store.ts            réglages, mémoire des correspondances, historique (tokens dans le trousseau)
     http.ts             client HTTP : refresh du token, 429 Retry-After, retries
     resolve.ts          recherche d'un titre sur la plateforme cible
     providers/
       spotify.ts        Web API (endpoints /items et POST /me/playlists de 2026)
       tidal.ts          API v2 openapi.tidal.com (JSON:API, include=, pagination par curseur)
-  preload/              pont sécurisé window.api (contextIsolation + sandbox)
   shared/               types + moteur de comparaison (utilisé par main, renderer et tests)
   renderer/src/
     components/ui/      composants Lumen UI (copiés par la CLI, cf. lumen.json)
@@ -101,6 +101,17 @@ Thème : tokens Lumen (`styles.css`), clair/sombre selon l'OS. Deux tokens ajout
 `src/renderer/src/components/Icon.tsx` centralise les noms d'icônes (`<Icon name="search" />`). `RuneIcon` ne transmet pas `className`, donc le composant l'enveloppe dans un `span`. Les logos Spotify et TIDAL viennent de `runeicons-react/brands` (recadrés sur le symbole et inversés en mode sombre, car dessinés en noir).
 
 `runeicons-react` embarque tout le set d'icônes, ce qui donne un bundle renderer d'environ 8 Mo. Sans impact notable en desktop ; si ça devient gênant, on peut générer un sous-ensemble avec `getIconById` + `buildSvg`.
+
+## Releases
+
+Un tag `v*` (par exemple `v0.1.0`, la même version que `package.json` et `src-tauri/tauri.conf.json`) lance GitHub Actions. Le workflow publie :
+
+- macOS Apple Silicon et Intel : `.dmg`
+- Windows : installeur `.exe`
+- Debian et Ubuntu : `.deb`
+- Fedora : `.rpm`
+
+Les builds ne sont pas signés : macOS et Windows affichent un avertissement à la première ouverture. Aucun Client ID ni token n’entre dans le dépôt ni dans les artefacts.
 
 ## Limites connues
 

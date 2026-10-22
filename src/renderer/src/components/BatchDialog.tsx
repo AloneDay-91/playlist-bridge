@@ -120,6 +120,8 @@ export function BatchDialog({ open, playlists, connected, onClose, onFinished }:
         const found = res.filter((r) => r.status === 'found' && r.match).map((r) => r.match!)
 
         let added = 0
+        let playlistId = counterpart?.id
+        let addedTracks: { id: string; uri?: string }[] | undefined
         if (found.length) {
           const addJob = newJobId()
           jobs.current.set(addJob, i)
@@ -131,6 +133,8 @@ export function BatchDialog({ open, playlists, connected, onClose, onFinished }:
             found
           )
           added = result.added
+          playlistId = result.playlistId
+          addedTracks = result.tracks
         }
 
         const entry = historyEntry({
@@ -138,6 +142,8 @@ export function BatchDialog({ open, playlists, connected, onClose, onFinished }:
           source: { service: src.service, name: src.name },
           target: { service: target, name: targetName },
           added,
+          playlistId,
+          addedTracks,
           resolutions: res,
           sources: new Map(sources.map((s) => [s.key, s.track]))
         })

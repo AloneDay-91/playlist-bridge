@@ -45,7 +45,7 @@ function Toaster() {
                   buttonVariants({ size: "icon-xs", variant: "ghost" }),
                   "shrink-0 text-muted-foreground hover:text-foreground",
                 )}
-                aria-label="Close"
+                aria-label="Fermer"
               >
                 <Icon name="close" size={14} />
               </ToastPrimitive.Close>
