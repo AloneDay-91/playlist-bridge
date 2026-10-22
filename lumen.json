@@ -1,0 +1,32 @@
+{
+  "aliases": {
+    "ui": "@/components/ui",
+    "lib": "@/lib"
+  },
+  "paths": {
+    "ui": "src/renderer/src/components/ui",
+    "lib": "src/renderer/src/lib"
+  },
+  "installed": [
+    "badge",
+    "button",
+    "button-variants",
+    "checkbox",
+    "dialog",
+    "empty",
+    "field",
+    "input",
+    "label",
+    "progress",
+    "scroll-area",
+    "skeleton",
+    "spinner",
+    "styles",
+    "tabs",
+    "toast",
+    "toggle",
+    "toggle-group",
+    "tooltip",
+    "utils"
+  ]
+}
